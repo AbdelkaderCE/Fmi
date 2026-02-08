@@ -51,7 +51,7 @@ demo_announcements = [
         "source_name": "main",
         "title": "Another old announcement",
         "date": "25/12/2024",
-        "age_days": "~1 year"
+        "age_days": 410  # Approximately 1 year old
     }
 ]
 

@@ -211,7 +211,7 @@ def scrape_all_announcements(source_name, source_url):
 
 # --- MAIN BOT LOGIC ---
 def announcement_monitor_task():
-    send_telegram_message("📢 <b>Bot v5.2 is starting up...</b>\n(Filtering announcements older than 3 days)")
+    send_telegram_message(f"📢 <b>Bot v5.2 is starting up...</b>\n(Filtering announcements older than {MAX_ANNOUNCEMENT_AGE_DAYS} days)")
 
     seen_ids = load_seen_ids()
     is_first_run = not seen_ids
