@@ -5,6 +5,8 @@ A Telegram bot that monitors university announcement pages and sends notificatio
 ## Features
 
 - **Multi-source monitoring**: Monitor multiple announcement pages simultaneously
+- **Age-based filtering**: Only sends announcements from the last 3 days (configurable)
+- **Source differentiation**: Visual icons distinguish CS department (🖥️) from university (🏛️) announcements
 - **Persistent tracking**: Remembers sent announcements across restarts
 - **Smart hashtags**: Automatically tags announcements based on keywords
 - **HTML formatting**: Clean, formatted messages with preview content
@@ -46,6 +48,21 @@ Set these as Replit Secrets or environment variables:
 - `PROXY_PORT`: (Optional) Proxy server port
 
 ## How It Works
+
+### Age-Based Filtering
+
+The bot automatically filters announcements based on their age:
+- Only announcements from the last **3 days** are sent to Telegram groups
+- Older announcements are ignored to prevent spam from outdated content
+- The age limit is configurable via `MAX_ANNOUNCEMENT_AGE_DAYS` in `main.py`
+- If a date cannot be parsed, the announcement is included (fail-safe behavior)
+
+### Source Differentiation
+
+Each announcement source has a unique icon for easy identification:
+- **🖥️ CS Department**: Computer Science department announcements
+- **🏛️ University**: Main university announcements
+- Icons appear in the message header to quickly distinguish the source
 
 ### Announcement Tracking
 
@@ -103,14 +120,15 @@ On first startup, the bot:
 
 ## Example Output
 
+### CS Department Announcement
 ```
-📢 New University Announcement! 📢
+📢 🖥️ New CS Department Announcement! 🖥️ 📢
 
 #Exams #Important
 
 📌 Title: Planning examens Semestre 2
-🗓️ Date: 29/04/2025
-📡 Source: main
+🗓️ Date: 06/02/2026
+📡 Source: CS department
 
 📝 Details:
 Le planning des examens du semestre 2 est disponible
@@ -119,3 +137,34 @@ Consultez le tableau pour les dates et horaires
 
 Visit the Announcements Page
 ```
+
+### University Announcement
+```
+📢 🏛️ New University Announcement! 🏛️ 📢
+
+#Results
+
+📌 Title: Résultats Master1
+🗓️ Date: 07/02/2026
+📡 Source: main
+
+📝 Details:
+Les résultats sont affichés
+…
+
+Visit the Announcements Page
+```
+
+## Maintenance
+
+### Cleaning Old Announcements
+
+Run the cleanup script to remove old announcements from the tracking file:
+```bash
+python3 cleanup_old_announcements.py
+```
+
+This script:
+- Removes announcements older than 3 days from `seen_announcements.json`
+- Keeps the tracking file clean and manageable
+- Safe to run periodically (will not affect current functionality)
