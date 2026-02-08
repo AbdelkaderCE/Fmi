@@ -93,6 +93,50 @@ def get_source_icon(source_name):
     """Get the icon for a specific source."""
     return SOURCE_ICONS.get(source_name, "📡")  # Default to satellite icon
 
+def format_announcement_message(ann, is_first_run=False):
+    """Format an announcement into a Telegram message with HTML."""
+    safe_title = escape_html(ann['title'])
+    safe_date = escape_html(ann['date'])
+    source_name = escape_html(ann['source_name'])
+    source_icon = get_source_icon(ann['source_name'])
+    hashtags = {escape_html(tag) for tag, keywords in KEYWORD_HASHTAGS.items() for keyword in keywords if keyword in ann['title'].lower()}
+
+    # Determine announcement type based on source
+    if ann['source_name'] == "CS department":
+        if is_first_run:
+            announcement_type = f"{source_icon} <b>Latest CS Department Announcement (on Bot Start)</b> {source_icon}"
+        else:
+            announcement_type = f"{source_icon} <b>New CS Department Announcement!</b> {source_icon}"
+    else:
+        if is_first_run:
+            announcement_type = f"{source_icon} <b>Latest University Announcement (on Bot Start)</b> {source_icon}"
+        else:
+            announcement_type = f"{source_icon} <b>New University Announcement!</b> {source_icon}"
+
+    message = f"📢 {announcement_type} 📢\n\n"
+    if hashtags: message += f"{' '.join(hashtags)}\n\n"
+    message += f"📌 <b>Title:</b> {safe_title}\n"
+    message += f"🗓️ <b>Date:</b> {safe_date}\n"
+    message += f"📡 <b>Source:</b> {source_name}\n\n📝 <b>Details:</b>\n"
+
+    preview_lines = ann['content_preview'].split('\n')
+    num_lines_to_send = 0
+    for line in preview_lines:
+        clean_line = line.strip()
+        if clean_line and clean_line.lower() != ann['title'].lower():
+            message += f"{escape_html(clean_line)}\n"
+            num_lines_to_send += 1
+        if num_lines_to_send >= 4: break
+    
+    # Add ellipsis for truncated content (only when not first run)
+    if not is_first_run and len(preview_lines) > num_lines_to_send and num_lines_to_send > 0:
+        message += "…\n"
+    
+    if num_lines_to_send == 0: message += "<i>(Full content on the website)</i>"
+    message += f'\n\n<a href="{ann["source_url"]}">Visit the Announcements Page</a>'
+    
+    return message
+
 # --- Bot's Core Logic ---
 def send_telegram_message(text):
     """Sends a message with HTML enabled, using a robust method."""
@@ -195,36 +239,7 @@ def announcement_monitor_task():
             print("First run logic is executing.")
             # Send only the latest announcement from all sources
             latest_announcement = all_announcements[0]
-
-            safe_title = escape_html(latest_announcement['title'])
-            safe_date = escape_html(latest_announcement['date'])
-            source_name = escape_html(latest_announcement['source_name'])
-            source_icon = get_source_icon(latest_announcement['source_name'])
-            hashtags = {escape_html(tag) for tag, keywords in KEYWORD_HASHTAGS.items() for keyword in keywords if keyword in latest_announcement['title'].lower()}
-
-            # Determine announcement type based on source
-            if latest_announcement['source_name'] == "CS department":
-                announcement_type = f"{source_icon} <b>Latest CS Department Announcement (on Bot Start)</b> {source_icon}"
-            else:
-                announcement_type = f"{source_icon} <b>Latest University Announcement (on Bot Start)</b> {source_icon}"
-
-            message = f"📢 {announcement_type} 📢\n\n"
-            if hashtags: message += f"{' '.join(hashtags)}\n\n"
-            message += f"📌 <b>Title:</b> {safe_title}\n"
-            message += f"🗓️ <b>Date:</b> {safe_date}\n"
-            message += f"📡 <b>Source:</b> {source_name}\n\n📝 <b>Details:</b>\n"
-
-            preview_lines = latest_announcement['content_preview'].split('\n')
-            num_lines_to_send = 0
-            for line in preview_lines:
-                clean_line = line.strip()
-                if clean_line and clean_line.lower() != latest_announcement['title'].lower():
-                    message += f"{escape_html(clean_line)}\n"
-                    num_lines_to_send += 1
-                if num_lines_to_send >= 4: break
-            if num_lines_to_send == 0: message += "<i>(Full content on the website)</i>"
-            message += f'\n\n<a href="{latest_announcement["source_url"]}">Visit the Announcements Page</a>'
-
+            message = format_announcement_message(latest_announcement, is_first_run=True)
             send_telegram_message(message)
 
             for ann in all_announcements:
@@ -245,36 +260,7 @@ def announcement_monitor_task():
             if new_announcements_to_send:
                 new_announcements_to_send.reverse()
                 for ann in new_announcements_to_send:
-                    safe_title = escape_html(ann['title'])
-                    safe_date = escape_html(ann['date'])
-                    source_name = escape_html(ann['source_name'])
-                    source_icon = get_source_icon(ann['source_name'])
-                    hashtags = {escape_html(tag) for tag, keywords in KEYWORD_HASHTAGS.items() for keyword in keywords if keyword in ann['title'].lower()}
-
-                    # Determine announcement type based on source
-                    if ann['source_name'] == "CS department":
-                        announcement_type = f"{source_icon} <b>New CS Department Announcement!</b> {source_icon}"
-                    else:
-                        announcement_type = f"{source_icon} <b>New University Announcement!</b> {source_icon}"
-
-                    message = f"📢 {announcement_type} 📢\n\n"
-                    if hashtags: message += f"{' '.join(hashtags)}\n\n"
-                    message += f"📌 <b>Title:</b> {safe_title}\n"
-                    message += f"🗓️ <b>Date:</b> {safe_date}\n"
-                    message += f"📡 <b>Source:</b> {source_name}\n\n📝 <b>Details:</b>\n"
-
-                    preview_lines = ann['content_preview'].split('\n')
-                    num_lines_to_send = 0
-                    for line in preview_lines:
-                        clean_line = line.strip()
-                        if clean_line and clean_line.lower() != ann['title'].lower():
-                            message += f"{escape_html(clean_line)}\n"
-                            num_lines_to_send += 1
-                        if num_lines_to_send >= 4: break
-                    if len(preview_lines) > num_lines_to_send and num_lines_to_send > 0: message += "…\n"
-                    if num_lines_to_send == 0: message += "<i>(Full content on the website)</i>"
-                    message += f'\n\n<a href="{ann["source_url"]}">Visit the Announcements Page</a>'
-
+                    message = format_announcement_message(ann, is_first_run=False)
                     send_telegram_message(message)
                     seen_ids.add(ann['id'])
                 save_seen_ids(seen_ids)
