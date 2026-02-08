@@ -3,6 +3,10 @@
     {
       "name": "main",
       "url": "https://fmi.univ-tiaret.dz/index.php"
+    },
+    {
+      "name": "CS department",
+      "url": "https://fmi.univ-tiaret.dz/index.php/avis-aux-etudiants-informatique"
     }
   ],
   "loop_time_seconds": 900,
