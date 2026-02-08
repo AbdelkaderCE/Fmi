@@ -24,13 +24,16 @@ else:
 try:
     with open('config.json', 'r') as f:
         config = json.load(f)
-    UNIVERSITY_ANNOUNCEMENT_URL = config['university_url']
+    ANNOUNCEMENT_SOURCES = config.get('announcement_sources', [])
+    # Backward compatibility: support old config format
+    if not ANNOUNCEMENT_SOURCES and 'university_url' in config:
+        ANNOUNCEMENT_SOURCES = [{"name": "main", "url": config['university_url']}]
     LOOP_TIME = config['loop_time_seconds']
     BOT_OWNER_ID = str(config['bot_owner_id'])
     print("Configuration from config.json loaded successfully.")
 except Exception as e:
     print(f"WARNING: Could not load config.json. Using fallback defaults. Error: {e}")
-    UNIVERSITY_ANNOUNCEMENT_URL = "https://fmi.univ-tiaret.dz/index.php"
+    ANNOUNCEMENT_SOURCES = [{"name": "main", "url": "https://fmi.univ-tiaret.dz/index.php"}]
     LOOP_TIME = 900
     BOT_OWNER_ID = None
 
@@ -98,13 +101,13 @@ def save_seen_ids(ids_set):
     with open(FILENAME_SEEN_IDS, 'w', encoding='utf-8') as f:
         json.dump(list(ids_set), f)
 
-def scrape_all_announcements():
+def scrape_all_announcements(source_name, source_url):
     try:
-        print(f"Fetching page: {UNIVERSITY_ANNOUNCEMENT_URL}...")
+        print(f"Fetching page: {source_url} (source: {source_name})...")
         proxies = None
         if PROXY_IP and PROXY_PORT:
             proxies = {"http": f"http://{PROXY_IP}:{PROXY_PORT}", "https": f"http://{PROXY_IP}:{PROXY_PORT}"}
-        response = requests.get(UNIVERSITY_ANNOUNCEMENT_URL, headers=WEB_HEADERS, timeout=REQUEST_TIMEOUT, proxies=proxies)
+        response = requests.get(source_url, headers=WEB_HEADERS, timeout=REQUEST_TIMEOUT, proxies=proxies)
         response.raise_for_status()
         soup = BeautifulSoup(response.content, 'html.parser')
 
@@ -119,11 +122,19 @@ def scrape_all_announcements():
                 date_str = date_parts[-1] if date_parts else None
                 if title and date_str:
                     content_preview = "\n".join([p.get_text(separator=' ', strip=True) for p in cells[0].find_all('p')])
-                    unique_id = f"{title}_{date_str}"
-                    found_announcements.append({"id": unique_id, "title": title, "date": date_str, "content_preview": content_preview})
+                    # Include source_name in unique_id to prevent conflicts between sources
+                    unique_id = f"{source_name}:{title}_{date_str}"
+                    found_announcements.append({
+                        "id": unique_id,
+                        "title": title,
+                        "date": date_str,
+                        "content_preview": content_preview,
+                        "source_name": source_name,
+                        "source_url": source_url
+                    })
         return found_announcements
     except Exception as e:
-        print(f"An error occurred during scraping: {e}")
+        print(f"An error occurred during scraping {source_name}: {e}")
         return []
 
 # --- MAIN BOT LOGIC ---
@@ -136,23 +147,37 @@ def announcement_monitor_task():
 
     while True:
         print(f"\n--- Checking for new announcements ({time.strftime('%Y-%m-%d %H:%M:%S')}) ---")
-        all_announcements = scrape_all_announcements()
+        
+        # Collect announcements from all sources
+        all_announcements = []
+        for source in ANNOUNCEMENT_SOURCES:
+            source_name = source.get('name', 'unknown')
+            source_url = source.get('url')
+            if not source_url:
+                print(f"Warning: Source '{source_name}' has no URL configured")
+                continue
+            announcements = scrape_all_announcements(source_name, source_url)
+            all_announcements.extend(announcements)
+        
         if not all_announcements:
             sleep(LOOP_TIME)
             continue
 
         if is_first_run:
             print("First run logic is executing.")
+            # Send only the latest announcement from all sources
             latest_announcement = all_announcements[0]
 
             safe_title = escape_html(latest_announcement['title'])
             safe_date = escape_html(latest_announcement['date'])
+            source_name = escape_html(latest_announcement['source_name'])
             hashtags = {escape_html(tag) for tag, keywords in KEYWORD_HASHTAGS.items() for keyword in keywords if keyword in latest_announcement['title'].lower()}
 
             message = f"📢 <b>Latest Announcement (on Bot Start)</b> 📢\n\n"
             if hashtags: message += f"{' '.join(hashtags)}\n\n"
             message += f"📌 <b>Title:</b> {safe_title}\n"
-            message += f"🗓️ <b>Date:</b> {safe_date}\n\n📝 <b>Details:</b>\n"
+            message += f"🗓️ <b>Date:</b> {safe_date}\n"
+            message += f"📡 <b>Source:</b> {source_name}\n\n📝 <b>Details:</b>\n"
 
             preview_lines = latest_announcement['content_preview'].split('\n')
             num_lines_to_send = 0
@@ -163,7 +188,7 @@ def announcement_monitor_task():
                     num_lines_to_send += 1
                 if num_lines_to_send >= 4: break
             if num_lines_to_send == 0: message += "<i>(Full content on the website)</i>"
-            message += f'\n\n<a href="{UNIVERSITY_ANNOUNCEMENT_URL}">Visit the Announcements Page</a>'
+            message += f'\n\n<a href="{latest_announcement["source_url"]}">Visit the Announcements Page</a>'
 
             send_telegram_message(message)
 
@@ -179,12 +204,14 @@ def announcement_monitor_task():
                 for ann in new_announcements_to_send:
                     safe_title = escape_html(ann['title'])
                     safe_date = escape_html(ann['date'])
+                    source_name = escape_html(ann['source_name'])
                     hashtags = {escape_html(tag) for tag, keywords in KEYWORD_HASHTAGS.items() for keyword in keywords if keyword in ann['title'].lower()}
 
                     message = f"📢 <b>New University Announcement!</b> 📢\n\n"
                     if hashtags: message += f"{' '.join(hashtags)}\n\n"
                     message += f"📌 <b>Title:</b> {safe_title}\n"
-                    message += f"🗓️ <b>Date:</b> {safe_date}\n\n📝 <b>Details:</b>\n"
+                    message += f"🗓️ <b>Date:</b> {safe_date}\n"
+                    message += f"📡 <b>Source:</b> {source_name}\n\n📝 <b>Details:</b>\n"
 
                     preview_lines = ann['content_preview'].split('\n')
                     num_lines_to_send = 0
@@ -196,7 +223,7 @@ def announcement_monitor_task():
                         if num_lines_to_send >= 4: break
                     if len(preview_lines) > num_lines_to_send and num_lines_to_send > 0: message += "…\n"
                     if num_lines_to_send == 0: message += "<i>(Full content on the website)</i>"
-                    message += f'\n\n<a href="{UNIVERSITY_ANNOUNCEMENT_URL}">Visit the Announcements Page</a>'
+                    message += f'\n\n<a href="{ann["source_url"]}">Visit the Announcements Page</a>'
 
                     send_telegram_message(message)
                     seen_ids.add(ann['id'])
