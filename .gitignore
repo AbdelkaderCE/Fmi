@@ -161,4 +161,5 @@ cython_debug/
 
 # Development and testing scripts
 test_*.py
+demo_*.py
 cleanup_old_announcements.py
