@@ -1,4 +1,4 @@
-# main.py - v5.1 (Final Formatting Fix)
+# main.py - v5.2 (Age Filter and Source Tags)
 from flask import Flask
 import threading
 import time
@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 from requests import get as telegram_get
 import os
 import json
+from datetime import datetime, timedelta
 
 # --- CONFIGURATION (Part 1: Get from Replit Secrets) ---
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
@@ -41,12 +42,18 @@ except Exception as e:
 WEB_HEADERS = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' }
 REQUEST_TIMEOUT = 20
 FILENAME_SEEN_IDS = "seen_announcements.json"
+MAX_ANNOUNCEMENT_AGE_DAYS = 3  # Only send announcements newer than this many days
 KEYWORD_HASHTAGS = {
     "#Exams": ["examen", "examens", "planning", "rattrapage"],
     "#Results": ["resultat", "résultats", "notes", "affichage"],
     "#Masters": ["master", "masters"],
     "#Doctorate": ["doctorat", "phd"],
     "#Important": ["important", "urgent", "reporté", "تنبيه", "هام"]
+}
+# Source-specific icons for differentiation
+SOURCE_ICONS = {
+    "CS department": "🖥️",  # Computer icon for CS department
+    "main": "🏛️"  # University building for main announcements
 }
 
 # --- Flask Web App Part ---
@@ -64,6 +71,27 @@ def escape_html(text):
     text = text.replace('<', '&lt;')
     text = text.replace('>', '&gt;')
     return text
+
+def parse_announcement_date(date_str):
+    """Parse date string in format dd/mm/yyyy and return datetime object."""
+    try:
+        return datetime.strptime(date_str, "%d/%m/%Y")
+    except (ValueError, TypeError):
+        return None
+
+def is_announcement_recent(date_str, max_days=MAX_ANNOUNCEMENT_AGE_DAYS):
+    """Check if announcement is within the max age limit."""
+    announcement_date = parse_announcement_date(date_str)
+    if not announcement_date:
+        # If we can't parse the date, include the announcement to be safe
+        return True
+    
+    days_old = (datetime.now() - announcement_date).days
+    return days_old <= max_days
+
+def get_source_icon(source_name):
+    """Get the icon for a specific source."""
+    return SOURCE_ICONS.get(source_name, "📡")  # Default to satellite icon
 
 # --- Bot's Core Logic ---
 def send_telegram_message(text):
@@ -139,7 +167,7 @@ def scrape_all_announcements(source_name, source_url):
 
 # --- MAIN BOT LOGIC ---
 def announcement_monitor_task():
-    send_telegram_message("📢 <b>Bot v5.1 is starting up...</b>")
+    send_telegram_message("📢 <b>Bot v5.2 is starting up...</b>\n(Filtering announcements older than 3 days)")
 
     seen_ids = load_seen_ids()
     is_first_run = not seen_ids
@@ -171,9 +199,16 @@ def announcement_monitor_task():
             safe_title = escape_html(latest_announcement['title'])
             safe_date = escape_html(latest_announcement['date'])
             source_name = escape_html(latest_announcement['source_name'])
+            source_icon = get_source_icon(latest_announcement['source_name'])
             hashtags = {escape_html(tag) for tag, keywords in KEYWORD_HASHTAGS.items() for keyword in keywords if keyword in latest_announcement['title'].lower()}
 
-            message = f"📢 <b>Latest Announcement (on Bot Start)</b> 📢\n\n"
+            # Determine announcement type based on source
+            if latest_announcement['source_name'] == "CS department":
+                announcement_type = f"{source_icon} <b>Latest CS Department Announcement (on Bot Start)</b> {source_icon}"
+            else:
+                announcement_type = f"{source_icon} <b>Latest University Announcement (on Bot Start)</b> {source_icon}"
+
+            message = f"📢 {announcement_type} 📢\n\n"
             if hashtags: message += f"{' '.join(hashtags)}\n\n"
             message += f"📌 <b>Title:</b> {safe_title}\n"
             message += f"🗓️ <b>Date:</b> {safe_date}\n"
@@ -197,7 +232,15 @@ def announcement_monitor_task():
             save_seen_ids(seen_ids)
             is_first_run = False
         else:
-            new_announcements_to_send = [ann for ann in all_announcements if ann['id'] not in seen_ids]
+            # Filter announcements to only include recent ones (within MAX_ANNOUNCEMENT_AGE_DAYS)
+            recent_announcements = [ann for ann in all_announcements if is_announcement_recent(ann['date'])]
+            
+            # Log filtered announcements
+            filtered_count = len(all_announcements) - len(recent_announcements)
+            if filtered_count > 0:
+                print(f"Filtered out {filtered_count} announcements older than {MAX_ANNOUNCEMENT_AGE_DAYS} days")
+            
+            new_announcements_to_send = [ann for ann in recent_announcements if ann['id'] not in seen_ids]
 
             if new_announcements_to_send:
                 new_announcements_to_send.reverse()
@@ -205,9 +248,16 @@ def announcement_monitor_task():
                     safe_title = escape_html(ann['title'])
                     safe_date = escape_html(ann['date'])
                     source_name = escape_html(ann['source_name'])
+                    source_icon = get_source_icon(ann['source_name'])
                     hashtags = {escape_html(tag) for tag, keywords in KEYWORD_HASHTAGS.items() for keyword in keywords if keyword in ann['title'].lower()}
 
-                    message = f"📢 <b>New University Announcement!</b> 📢\n\n"
+                    # Determine announcement type based on source
+                    if ann['source_name'] == "CS department":
+                        announcement_type = f"{source_icon} <b>New CS Department Announcement!</b> {source_icon}"
+                    else:
+                        announcement_type = f"{source_icon} <b>New University Announcement!</b> {source_icon}"
+
+                    message = f"📢 {announcement_type} 📢\n\n"
                     if hashtags: message += f"{' '.join(hashtags)}\n\n"
                     message += f"📌 <b>Title:</b> {safe_title}\n"
                     message += f"🗓️ <b>Date:</b> {safe_date}\n"
