@@ -139,28 +139,45 @@ def format_announcement_message(ann, is_first_run=False):
 
 # --- Bot's Core Logic ---
 def send_telegram_message(text):
-    """Sends a message with HTML enabled, using a robust method."""
+    """Sends a message with HTML enabled, targeting specific topics."""
     if not BOT_TOKEN or not GROUPS_IDS:
         print("Error: BOT_TOKEN or GROUPS_IDS not set.")
         return
 
     base_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
+    # Define which groups should go to which topics (Thread IDs)
+    # Group ID : Topic ID
+    TOPIC_MAPPING = {
+        "-1001606743408": 14724,  # The Announcement Topic
+        # "-1002558838915": 12345 # Uncomment and add ID if this group also has a topic
+    }
+
     for group_id in GROUPS_IDS:
-        # Let the requests library handle URL encoding by passing parameters
+        clean_id = group_id.strip() # Remove any accidental spaces from Render settings
+        
         params = {
-            'chat_id': group_id,
+            'chat_id': clean_id,
             'text': text,
             'disable_notification': False,
             'parse_mode': 'HTML'
         }
+
+        # Check if this group ID exists in our topic mapping
+        if clean_id in TOPIC_MAPPING:
+            params['message_thread_id'] = TOPIC_MAPPING[clean_id]
+            print(f"DEBUG: Routing message to topic {TOPIC_MAPPING[clean_id]} in group {clean_id}")
+
         try:
             response = telegram_get(base_url, params=params, timeout=REQUEST_TIMEOUT)
             if response.status_code != 200:
-                print(f"Telegram error for group {group_id}: {response.text}")
+                print(f"Telegram error for group {clean_id}: {response.text}")
+            else:
+                print(f"Successfully sent to group {clean_id}")
         except Exception as E:
             print(f"An error occurred in send_telegram_message: {E}")
-        sleep(1)
+        
+        sleep(1) # Respect Telegram's rate limits
 
 def load_seen_ids():
     try:
