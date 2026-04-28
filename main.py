@@ -39,7 +39,6 @@ except Exception as e:
     BOT_OWNER_ID = None
 
 # --- CONFIGURATION (Part 3: Script Defaults) ---
-DEBUG_MODE = False
 WEB_HEADERS = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' }
 REQUEST_TIMEOUT = 20
 FILENAME_SEEN_IDS = "seen_announcements.json"
@@ -140,54 +139,29 @@ def format_announcement_message(ann, is_first_run=False):
 
 # --- Bot's Core Logic ---
 def send_telegram_message(text):
-    """Sends a message, but checks DEBUG_MODE first to avoid spamming groups."""
-    if not BOT_TOKEN:
-        print("Error: BOT_TOKEN not set.")
+    """Sends a message with HTML enabled, using a robust method."""
+    if not BOT_TOKEN or not GROUPS_IDS:
+        print("Error: BOT_TOKEN or GROUPS_IDS not set.")
         return
-
-    # --- ROUTING LOGIC ---
-    # If DEBUG_MODE is True, we only send to the Owner.
-    # If False, we send to the whole list of Groups.
-    if DEBUG_MODE:
-        if BOT_OWNER_ID:
-            target_ids = [BOT_OWNER_ID]
-            print(f"DEBUG: Bot is in Debug Mode. Redirecting message to Owner: {BOT_OWNER_ID}")
-        else:
-            print("DEBUG: Debug Mode is ON but no BOT_OWNER_ID set. Printing to console instead.")
-            print(f"CONTENT: {text}")
-            return
-    else:
-        target_ids = GROUPS_IDS
 
     base_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
-    # Ensure these IDs match exactly what is in your GROUPS_IDS
-    TOPIC_MAPPING = {
-       "-1003814230039": 2,  # The Announcement Topic
-    }
-
-    for chat_id in target_ids:
-        clean_id = str(chat_id).strip() 
-        
+    for group_id in GROUPS_IDS:
+        # Let the requests library handle URL encoding by passing parameters
         params = {
-            'chat_id': clean_id,
+            'chat_id': group_id,
             'text': text,
+            'disable_notification': False,
             'parse_mode': 'HTML'
         }
-
-        # Apply the Topic ID ONLY if we are NOT in debug mode
-        if not DEBUG_MODE and clean_id in TOPIC_MAPPING:
-            params['message_thread_id'] = TOPIC_MAPPING[clean_id]
-            print(f"DEBUG: Routing to topic {TOPIC_MAPPING[clean_id]}")
-
         try:
             response = telegram_get(base_url, params=params, timeout=REQUEST_TIMEOUT)
             if response.status_code != 200:
-                print(f"Telegram error: {response.text}")
-        except Exception as e:
-            print(f"Request failed: {e}")
-        
+                print(f"Telegram error for group {group_id}: {response.text}")
+        except Exception as E:
+            print(f"An error occurred in send_telegram_message: {E}")
         sleep(1)
+
 def load_seen_ids():
     try:
         with open(FILENAME_SEEN_IDS, 'r', encoding='utf-8') as f:
