@@ -10,5 +10,11 @@
     }
   ],
   "loop_time_seconds": 900,
-  "bot_owner_id": "6896232841"
+  "bot_owner_id": "6896232841",
+  "default_topic_id": null,
+  "topic_mappings": {
+    "#Exams": null,
+    "#Results": null,
+    "#Important": null
+  }
 }

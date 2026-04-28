@@ -31,12 +31,18 @@ try:
         ANNOUNCEMENT_SOURCES = [{"name": "main", "url": config['university_url']}]
     LOOP_TIME = config['loop_time_seconds']
     BOT_OWNER_ID = str(config['bot_owner_id'])
+    DEFAULT_TOPIC_ID = config.get('default_topic_id')
+    TOPIC_MAPPINGS = config.get('topic_mappings', {})
+    SENDING_ENABLED = True  # Enabled sending messages.
+    TARGET_TOPIC_NAME = "Announcements"
     print("Configuration from config.json loaded successfully.")
 except Exception as e:
     print(f"WARNING: Could not load config.json. Using fallback defaults. Error: {e}")
     ANNOUNCEMENT_SOURCES = [{"name": "main", "url": "https://fmi.univ-tiaret.dz/index.php"}]
     LOOP_TIME = 900
     BOT_OWNER_ID = None
+    DEFAULT_TOPIC_ID = None
+    TOPIC_MAPPINGS = {}
 
 # --- CONFIGURATION (Part 3: Script Defaults) ---
 WEB_HEADERS = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' }
@@ -55,6 +61,7 @@ SOURCE_ICONS = {
     "CS department": "🖥️",  # Computer icon for CS department
     "main": "🏛️"  # University building for main announcements
 }
+DISCOVERED_TOPICS_FILE = "discovered_topics.json"
 
 # --- Flask Web App Part ---
 app = Flask(__name__)
@@ -137,9 +144,124 @@ def format_announcement_message(ann, is_first_run=False):
     
     return message
 
+def get_thread_id_for_announcement(ann):
+    """Strictly determines the topic ID. Only sends to 'Announcements' or matched hashtags."""
+    discovered = load_discovered_topics()
+    
+    # 1. Check for specific hashtag mappings first (if configured)
+    for tag, keywords in KEYWORD_HASHTAGS.items():
+        for keyword in keywords:
+            if keyword in ann['title'].lower():
+                topic_id = TOPIC_MAPPINGS.get(tag) or discovered.get(tag)
+                if topic_id:
+                    return topic_id
+    
+    # 2. Fallback ONLY to "Announcements" topic
+    ann_topic_id = discovered.get(TARGET_TOPIC_NAME) or discovered.get(TARGET_TOPIC_NAME.lower())
+    if ann_topic_id:
+        return ann_topic_id
+
+    # 3. If "Announcements" topic isn't found, return None (this prevents it from going to General)
+    return None
+
+def load_discovered_topics():
+    """Loads the discovered topic name -> ID mapping."""
+    try:
+        with open(DISCOVERED_TOPICS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            # If it's a list (old format), convert to dict or return empty
+            if isinstance(data, list):
+                return {} 
+            return data
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+def save_topic_mapping(name, thread_id):
+    """Saves a single topic name to ID mapping."""
+    mappings = load_discovered_topics()
+    mappings[name] = thread_id
+    mappings[name.lower()] = thread_id # Store lowercase too for easier lookup
+    with open(DISCOVERED_TOPICS_FILE, "w", encoding="utf-8") as f:
+        json.dump(mappings, f, indent=4, ensure_ascii=False)
+    print(f"✨ LEARNED: Topic '{name}' is now mapped to ID {thread_id}")
+
 # --- Bot's Core Logic ---
-def send_telegram_message(text):
-    """Sends a message with HTML enabled, using a robust method."""
+def get_group_topics(chat_id):
+    """
+    NOTE: The standard Telegram Bot API does NOT provide a method to list all forum topics.
+    The method 'getForumTopics' used previously is not a valid Bot API method (it returns 404).
+    
+    To get a Topic ID (message_thread_id):
+    1. Open Telegram.
+    2. Go to the Topic.
+    3. Right-click any message in that topic and select 'Copy Message Link'.
+    4. The link looks like: https://t.me/c/1606743408/12345/67890
+    5. The middle number (12345) is your Topic ID.
+    """
+    print(f"INFO: Automatic topic discovery is not supported by Telegram Bot API for group {chat_id}.")
+    print(f"      Please manually find the Topic ID and update 'config.json'.")
+    return []
+
+def save_discovered_topics(topics):
+    """Saves the list of discovered topics to a file (Legacy support)."""
+    # This is now handled by save_topic_mapping, but we'll keep the file updated
+    pass
+
+def topic_listener_task():
+    """Background task to listen for /linktopic commands and service messages."""
+    if not BOT_TOKEN: return
+    
+    print("📡 Listener started: Send '/linktopic Name' in a topic to teach the bot.")
+    
+    # Initialize offset to -1 to skip all old pending updates and only get new ones
+    offset = -1 
+    while True:
+        try:
+            url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
+            params = {'offset': offset, 'timeout': 30, 'allowed_updates': ["message"]}
+            response = requests.get(url, params=params, timeout=35)
+            data = response.json()
+            
+            if data.get("ok"):
+                for update in data.get("result", []):
+                    offset = update['update_id'] + 1
+                    msg = update.get("message")
+                    if not msg: continue
+                    
+                    chat_id = msg.get("chat", {}).get("id")
+                    thread_id = msg.get("message_thread_id")
+                    
+                    # 1. Handle /linktopic command
+                    text = msg.get("text", "")
+                    if text.startswith("/linktopic") and thread_id:
+                        parts = text.split(" ", 1)
+                        if len(parts) > 1:
+                            topic_name = parts[1].strip()
+                            save_topic_mapping(topic_name, thread_id)
+                            send_telegram_message(f"✅ Linked topic <b>{topic_name}</b> to ID <code>{thread_id}</code>", thread_id=thread_id)
+                    
+                    # 2. Handle service messages (topic created/edited)
+                    # Note: These only work if the bot is admin and sees the event
+                    created = msg.get("forum_topic_created")
+                    if created and thread_id:
+                        save_topic_mapping(created.get("name"), thread_id)
+                        
+                    edited = msg.get("forum_topic_edited")
+                    if edited and thread_id:
+                        if edited.get("name"):
+                            save_topic_mapping(edited.get("name"), thread_id)
+            
+            time.sleep(1)
+        except Exception as e:
+            print(f"Listener error: {e}")
+            time.sleep(5)
+
+def send_telegram_message(text, thread_id=None):
+    """Sends a message with HTML enabled, optionally to a specific topic."""
+    if not SENDING_ENABLED:
+        print(f"Skipping message (Sending is DISABLED): {text[:50]}...")
+        return
+
     if not BOT_TOKEN or not GROUPS_IDS:
         print("Error: BOT_TOKEN or GROUPS_IDS not set.")
         return
@@ -147,13 +269,20 @@ def send_telegram_message(text):
     base_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
     for group_id in GROUPS_IDS:
-        # Let the requests library handle URL encoding by passing parameters
         params = {
             'chat_id': group_id,
             'text': text,
             'disable_notification': False,
             'parse_mode': 'HTML'
         }
+        
+        # If no thread_id is provided, we skip it (prevents sending to General)
+        if not thread_id:
+            print(f"Skipping message for group {group_id}: No topic ID found.")
+            continue
+            
+        params['message_thread_id'] = thread_id
+            
         try:
             response = telegram_get(base_url, params=params, timeout=REQUEST_TIMEOUT)
             if response.status_code != 200:
@@ -211,7 +340,41 @@ def scrape_all_announcements(source_name, source_url):
 
 # --- MAIN BOT LOGIC ---
 def announcement_monitor_task():
-    send_telegram_message(f"📢 <b>Bot v5.2 is starting up...</b>\n(Filtering announcements older than {MAX_ANNOUNCEMENT_AGE_DAYS} days)")
+    global DEFAULT_TOPIC_ID
+    
+    # Print and Save topics on startup
+    print("\n--- Topic Discovery & Sync ---")
+    all_discovered = []
+    found_target_topic = False
+
+    for gid in GROUPS_IDS:
+        # Note: Automatic discovery is not possible via Bot API
+        get_group_topics(gid) 
+        
+    if DEFAULT_TOPIC_ID:
+        print(f"✅ CONFIGURED: Using default topic ID {DEFAULT_TOPIC_ID} from config.json")
+    
+    # Try to find Announcements ID for startup/error messages
+    ann_id = DEFAULT_TOPIC_ID or load_discovered_topics().get(TARGET_TOPIC_NAME)
+    
+    if ann_id:
+        print(f"✅ TARGETED: System messages will go to topic ID {ann_id}")
+    else:
+        print(f"⚠️ WARNING: No topic ID found for 'Announcements'. System messages will be skipped.")
+
+    if TOPIC_MAPPINGS:
+        active_mappings = {k: v for k, v in TOPIC_MAPPINGS.items() if v is not None}
+        if active_mappings:
+            print(f"✅ CONFIGURED: Found {len(active_mappings)} topic mappings in config.json")
+    
+    # Save empty list for now (or could save what we have in config)
+    save_discovered_topics(all_discovered)
+
+    print("-------------------------------\n")
+
+    # Use the discovered ID for the startup message
+    startup_thread_id = DEFAULT_TOPIC_ID or load_discovered_topics().get(TARGET_TOPIC_NAME)
+    send_telegram_message(f"📢 <b>Bot v5.2 is starting up...</b>\n(Filtering announcements older than {MAX_ANNOUNCEMENT_AGE_DAYS} days)", thread_id=startup_thread_id)
 
     seen_ids = load_seen_ids()
     is_first_run = not seen_ids
@@ -239,8 +402,9 @@ def announcement_monitor_task():
             print("First run logic is executing.")
             # Send only the latest announcement from all sources
             latest_announcement = all_announcements[0]
+            thread_id = get_thread_id_for_announcement(latest_announcement)
             message = format_announcement_message(latest_announcement, is_first_run=True)
-            send_telegram_message(message)
+            send_telegram_message(message, thread_id=thread_id)
 
             for ann in all_announcements:
                 seen_ids.add(ann['id'])
@@ -260,8 +424,9 @@ def announcement_monitor_task():
             if new_announcements_to_send:
                 new_announcements_to_send.reverse()
                 for ann in new_announcements_to_send:
+                    thread_id = get_thread_id_for_announcement(ann)
                     message = format_announcement_message(ann, is_first_run=False)
-                    send_telegram_message(message)
+                    send_telegram_message(message, thread_id=thread_id)
                     seen_ids.add(ann['id'])
                 save_seen_ids(seen_ids)
             else:
@@ -276,11 +441,17 @@ if __name__ == '__main__':
     flask_thread.daemon = True
     flask_thread.start()
 
+    # Start the topic listener thread
+    listener_thread = threading.Thread(target=topic_listener_task)
+    listener_thread.daemon = True
+    listener_thread.start()
+
     try:
         announcement_monitor_task()
     except Exception as e:
         print(f"FATAL ERROR in main task: {e}")
         if BOT_OWNER_ID:
             error_message = f"🚨 <b>BOT CRASHED!</b> 🚨\n\nFatal error in the main task:\n<code>{escape_html(str(e))}</code>"
-            # Use the robust send_telegram_message function to send the error
-            send_telegram_message(error_message)
+            # Try to send error to Announcements topic so you see it
+            err_thread_id = DEFAULT_TOPIC_ID or load_discovered_topics().get(TARGET_TOPIC_NAME)
+            send_telegram_message(error_message, thread_id=err_thread_id)
