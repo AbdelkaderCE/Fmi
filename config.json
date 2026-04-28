@@ -11,7 +11,7 @@
   ],
   "loop_time_seconds": 900,
   "bot_owner_id": "6896232841",
-  "default_topic_id": null,
+  "default_topic_id": 14724,
   "topic_mappings": {
     "#Exams": null,
     "#Results": null,
